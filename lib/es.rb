@@ -2,7 +2,7 @@
 
 module ES
   def self.server
-    Thread.current[:es_connection] ||= Stretcher::Server.new(ENV['ELASTICSEARCH_URL'])
+    Thread.current[:es_connection] ||= Stretcher::Server.new(ENV['ELASTICSEARCH_URL'], :read_timeout => 120)
   end
 
   def self.index(index_name)
@@ -19,8 +19,8 @@ module ES
   def self.create_index(index_name, options={})
     # number_of_replicas doesn't count master
     index(index_name).create(:index => options.reverse_merge(:refresh_interval => 10*1000,
-                                                             :number_of_replicas => 1,
-                                                             :number_of_shards => 16))
+                                                             :number_of_replicas => 0,
+                                                             :number_of_shards => 8))
   rescue Stretcher::RequestError => e
     raise e unless e.http_response.body['error'] =~ /IndexAlreadyExistsException/
   end
@@ -29,23 +29,27 @@ module ES
     start_date ||= Date.today
     end_date   ||= Date.today + 1.day
     (start_date..end_date).each { |day| create_index(day.to_s) }
-    create_index(:live, :number_of_shards => 16, :number_of_replicas => 0)
+    create_index(:src, :number_of_shards => 16, :number_of_replicas => 0)
     update_all_mappings
     # TODO Automatic alias for the latest index
     # server.aliases(:actions => [:add => {:index => end_date.to_s, :alias => :latest}])
   end
 
   def self.delete_all_indexes
-    index('2013-*').delete # avoid deleting the live index (sources)
+    index('2014-*').delete # avoid deleting the src index
   end
 
   def self.update_all_mappings
     App.update_mapping(:_all) rescue nil
-    Source.update_mapping(:live) rescue nil
+    Source.update_mapping(:src) rescue nil
   end
 
   class Model < Hashie::Dash
     alias_attribute :id, :_id
+
+    def initialize(attributes={}, &block)
+      super(Hash[attributes].symbolize_keys, &block)
+    end
 
     def self.mapping
       @mapping ||= {}
@@ -86,10 +90,10 @@ module ES
       result = self.index(index_name).search({:search_type => :scan, :scroll => '5m', :size => 1000}, query)
       return if result.total.zero?
 
-      scroll_id = result[:raw][:_scroll_id]
+      scroll_id = result.raw[:_scroll_id]
       bar = ProgressBar.create(:format => '%t |%b>%i| %c/%C %e', :title => "Scan", :total => result.total)
       loop do
-        result = ES.server.request(:get, '_search/scroll', :scroll => '5m', :scroll_id => scroll_id)
+        result = ES.server.request(:get, ES.server.path_uri('/_search/scroll'), :scroll => '5m', :scroll_id => scroll_id)
         data = result.hits.hits
         break if data.empty?
         scroll_id = result[:_scroll_id]

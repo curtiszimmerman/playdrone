@@ -8,6 +8,7 @@ module Market
                   :ssl => {:verify => false, :version => 'TLSv1'}) do |builder|
         builder.use     Market::FaradayMiddleware
         builder.request :url_encoded
+        builder.response :follow_redirects
 
         builder.options[:open_timeout] = 10
         builder.options[:read_timeout] = 10
@@ -109,8 +110,47 @@ module Market
     result = api.post('purchase', :ot => 1, :doc => app_id, :vc => version_code) do |builder|
       # The API can be a little slow to authorize the purchase
       builder.options[:read_timeout] = 30
+      # Trying to use the same account so we are nicer with Google.
+      builder.options[:account_affinity] = app_id
     end
     PurchaseResult.new result.body
+  end
+
+  class BrowseResult < Struct.new(:payload)
+    def list_url
+      payload[:payload][:browse_response][:contents_url]
+    end
+
+    def categories
+      return nil unless payload[:payload][:browse_response][:category]
+      Hash[payload[:payload][:browse_response][:category].map { |k,v| [k[:name],k[:data_url]] }]
+    end
+  end
+
+  def self.browse(options={})
+    if options[:raw_url]
+      BrowseResult.new api.get(options[:raw_url]).body
+    else
+      params = {}
+      params[:c] = 3 # App category
+      BrowseResult.new api.get('browse', params).body
+    end
+  end
+
+  class ListResult < Struct.new(:payload)
+    def docs
+      payload[:payload][:list_response][:doc]
+    end
+  end
+
+  def self.list(options={})
+    if options[:raw_url]
+      ListResult.new api.get(options[:raw_url]).body
+    else
+      params = {}
+      params[:c] = 3 # App category
+      ListResult.new api.get('list', params).body
+    end
   end
 
   class << self

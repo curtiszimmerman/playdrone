@@ -3,10 +3,12 @@ module Stack
   # and we can retry the whole thing.
   def self.common_stack
     ::Middleware::Builder.new do
+      use CleanupMissingAppsAfter
       use IndexAppAfter
-        use FetchMarketDetails
+
+        use Rails.env.production? ? FetchMarketDetailsS3 : FetchMarketDetails
           use CacheApkResults
-            use DownloadApk
+            use Rails.env.production? ? DownloadApkS3 : DownloadApk
             use DecompileApk
             use IndexSources
             use FindTokens
@@ -16,6 +18,19 @@ module Stack
             use FindLibraries
             # use Signature
     end
+  end
+
+  def self.reindex_sources(options={})
+    raise "missing app_id" unless options[:app_id]
+
+    @reindex_sources ||= ::Middleware::Builder.new do
+      use LockApp
+        use PrepareFS
+          use ReindexSourcesShim
+            use DecompileApk
+              use IndexSources
+    end
+    @reindex_sources.call(options.dup)
   end
 
   def self.reprocess_app(options={})
@@ -44,6 +59,24 @@ module Stack
             use Stack.common_stack
     end
     @create_app_stack.call(options)
+    options[:app]
+  end
+
+  def self.process_app_only_raw(options={})
+    raise "missing app_id" unless options[:app_id]
+    options = options.dup
+    options[:crawled_at] ||= Date.today
+    # can pass :reprocess => branch to reprocess that branch
+    # do not use unless you know what you are doing.
+
+    @process_app_only_raw ||= ::Middleware::Builder.new do
+      use LockApp
+        use PrepareScratch
+          use CleanupMissingAppsAfter
+            use FetchMarketDetailsS3
+            use DownloadApkS3
+    end
+    @process_app_only_raw.call(options)
     options[:app]
   end
 

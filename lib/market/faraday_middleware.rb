@@ -5,8 +5,8 @@ module Market
 
   class FaradayMiddleware < Faraday::Response::Middleware
     def call(env)
-      # Note that first_usable does the rate limit accounting
-      account = Account.first_usable
+      affinity = env[:request][:account_affinity]
+      account = affinity ? Account.get_with_affinity(affinity) : Account.first_usable
       env[:account] = account
 
       env[:request_headers].reverse_merge!(
@@ -46,12 +46,16 @@ module Market
       parsed_body = ::GooglePlay::ResponseWrapper.new.parse_from_string(env[:body]).to_hash rescue nil
       env[:body] = parsed_body if parsed_body
 
+      if env[:status] == 404
+        raise Market::NotFound.new :status => env[:status], :body => env[:body]
+      end
+
       if env[:status] == 500 && env[:body].to_s =~ /(Item not found|could not be found)/
         raise Market::NotFound.new :status => env[:status], :body => env[:body]
       end
 
       unless env[:status] == 200
-        raise Market::BadRequest.new :status => env[:status], :body => env[:body]
+        raise Market::BadRequest.new :status => env[:status], :account => env[:account].email, :body => env[:body]
       end
     end
   end

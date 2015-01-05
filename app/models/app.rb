@@ -15,7 +15,15 @@ class App < ES::Model
 
     def all
       # TODO batches
-      Redis.instance.sort('apps', :order => 'alpha').each
+      Redis.instance.sort('active_apps', :order => 'alpha').each
+    end
+
+    def bucket_hash(app_id)
+      "#{Digest::SHA1.hexdigest(app_id)[0...2]}"
+    end
+
+    def download_url(app_id, version_code)
+      "http://archive.org/download/playdrone-apk-#{bucket_hash(app_id)}/#{app_id}-#{version_code}.apk"
     end
   end
 
@@ -36,6 +44,10 @@ class App < ES::Model
       # This average sucks a bit. Apps are likely to be closer to the lower bound.
       self.downloads_avg = (self.downloads + self.downloads_max)/2
     end
+  end
+
+  def bucket_hash
+    self.class.bucket_hash(id)
   end
 
   property :_id,                :type => :string,  :index    => :not_analyzed
@@ -130,7 +142,7 @@ class App < ES::Model
   property :crawled_at,      :type => :date, :store => true
 
   # DownloadApk attributes
-  property :forward_locked,  :type => :boolean
+  # property :forward_locked,  :type => :boolean
   property :downloaded,      :type => :boolean
 
   # DecompileApk attributes

@@ -8,7 +8,7 @@ def submit_metrics_once
       local disabled = redis.call('get', prefix .. ':disabled')
       local rate = tonumber(redis.call('get', prefix .. ':rate_limit_minutes')) or 0
 
-      if rate <= #{Account::MAX_QUERIES_PER_MIN} and not disabled then
+      if rate <= #{Account::MAX_QUERIES_PER_ACCOUNT_PER_MIN} and not disabled then
         enabled_accounts = enabled_accounts + 1
       end
     end
@@ -21,10 +21,36 @@ def submit_metrics_once
   StatsD.gauge('account.enabled_count', num_enabled_accounts)
 
   StatsD.gauge('apps.count', Redis.instance.scard('apps'))
+  StatsD.gauge('apps.active_count', Redis.instance.scard('active_apps'))
 
   Sidekiq::Stats.new.queues.each do |queue_name, size|
     StatsD.gauge("sidekiq.#{queue_name}", size)
   end
+
+  %w(processed failed enqueued retry_size scheduled_size).each do |stat|
+    StatsD.gauge("sidekiq.stats.#{stat}", Sidekiq::Stats.new.__send__(stat))
+  end
+
+  StatsD.gauge('account.enabled_count', num_enabled_accounts)
+
+
+  # results = App.index(Date.today).search(
+    # :size => 0,
+    # :query => {:match_all => {}},
+    # :facets => {
+      # :free            => { :terms => { :field => :free }},
+      # :downloaded      => { :terms => { :field => :downloaded }},
+      # :decompiled      => { :terms => { :field => :decompiled }},
+      # :apk_updated     => { :terms => { :field => :apk_updated }},
+      # :market_removed  => { :terms => { :field => :market_removed }},
+      # :market_released => { :terms => { :field => :market_released }},
+    # })
+
+  # StatsD.gauge("apps.daily.total", results.total)
+  # %w(free downloaded decompiled apk_updated market_removed market_released).each do |facet|
+    # value = results.facets[facet]['terms'].select { |t| t['term'] == 'T' }.first['count'] rescue 0
+    # StatsD.gauge("apps.daily.#{facet}", value)
+  # end
 end
 
 namespace :metrics do
